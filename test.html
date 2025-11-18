@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>自動生成填字遊戲</title>
+    <style>
+        body {
+            font-family: "微軟正黑體", sans-serif;
+            background-color: #f8f9fa;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            margin: 0;
+            padding: 20px;
+        }
+
+        h1 { color: #2c3e50; margin-bottom: 10px; }
+        .sub-text { color: #7f8c8d; font-size: 0.9em; margin-bottom: 20px; }
+
+        /* 遊戲主區域 */
+        .game-wrapper {
+            display: flex;
+            gap: 40px;
+            align-items: flex-start;
+            flex-wrap: wrap;
+            justify-content: center;
+            max-width: 1200px;
+        }
+
+        /* 填字網格區 */
+        #crossword-board {
+            display: grid;
+            /* 格子大小由 JS 動態設定，但這裡設個預設值 */
+            background: #2c3e50;
+            padding: 5px;
+            border: 2px solid #2c3e50;
+            gap: 1px; /* 格子間的黑線 */
+        }
+
+        .cell {
+            width: 40px;
+            height: 40px;
+            background-color: #2c3e50; /* 預設是黑格子 */
+            position: relative;
+        }
+
+        .cell.active {
+            background-color: white;
+        }
+
+        /* 儲存格內的輸入框 */
+        .cell input {
+            width: 100%;
+            height: 100%;
+            border: none;
+            text-align: center;
+            font-size: 1.2em;
+            font-family: "微軟正黑體";
+            font-weight: bold;
+            background: transparent;
+            outline: none;
+            padding: 0;
+            color: #2c3e50;
+            cursor: text;
+        }
+        
+        .cell input:focus {
+            background-color: #e8f6f3;
+        }
+
+        /* 題號 (左上角小數字) */
+        .cell-number {
+            position: absolute;
+            top: 1px;
+            left: 2px;
+            font-size: 10px;
+            color: #666;
+            pointer-events: none;
+            font-weight: bold;
+        }
+
+        /* 提示區 */
+        .clues-container {
+            display: flex;
+            gap: 30px;
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+            min-width: 300px;
+        }
+
+        .clue-column {
+            flex: 1;
+            min-width: 150px;
+        }
+
+        h3 { 
+            border-bottom: 2px solid #eee; 
+            padding-bottom: 10px; 
+            color: #2980b9;
+        }
+
+        ul { padding-left: 20px; margin: 0; }
+        li { margin-bottom: 8px; color: #555; line-height: 1.4;}
+        
+        /* 答對/答錯樣式 */
+        .correct { background-color: #d4efdf !important; }
+        .wrong { background-color: #fadbd8 !important; }
+
+        /* 按鈕區 */
+        .controls {
+            margin-top: 30px;
+            display: flex;
+            gap: 15px;
+        }
+
+        button {
+            padding: 10px 25px;
+            font-size: 1em;
+            cursor: pointer;
+            border: none;
+            border-radius: 5px;
+            color: white;
+            transition: opacity 0.2s;
+        }
+        
+        .btn-check { background-color: #27ae60; }
+        .btn-retry { background-color: #3498db; }
+        .btn-reveal { background-color: #e67e22; }
+
+        button:hover { opacity: 0.9; }
+
+        /* 手機調整 */
+        @media (max-width: 768px) {
+            .cell { width: 32px; height: 32px; }
+            .game-wrapper { flex-direction: column-reverse; align-items: center; }
+            .clues-container { width: 90%; flex-direction: column; gap: 10px;}
+        }
+    </style>
+</head>
+<body>
+
+    <h1>生詞填字遊戲</h1>
+    <div class="sub-text">輸入中文完成填字，根據英文提示作答</div>
+
+    <div class="game-wrapper">
+        <div class="clues-container">
+            <div class="clue-column">
+                <h3>橫向 (Across)</h3>
+                <ul id="across-list"></ul>
+            </div>
+            <div class="clue-column">
+                <h3>直向 (Down)</h3>
+                <ul id="down-list"></ul>
+            </div>
+        </div>
+
+        <div id="crossword-board"></div>
+    </div>
+
+    <div class="controls">
+        <button class="btn-check" onclick="checkAnswers()">檢查答案</button>
+        <button class="btn-reveal" onclick="revealAnswers()">偷看答案</button>
+        <button class="btn-retry" onclick="initGame()">重新生成</button>
+    </div>
+
+    <script src="words.js"></script>
+
+    <script>
+        const BOARD_SIZE = 15; // 網格大小 15x15
+        let grid = [];        // 存放解答字符
+        let cellInputs = [];  // 存放 DOM 元素
+        let activeWords = []; // 成功放進去的字
+
+        const boardEl = document.getElementById('crossword-board');
+        const acrossListEl = document.getElementById('across-list');
+        const downListEl = document.getElementById('down-list');
+
+        if (typeof wordData === 'undefined') {
+            alert("找不到 words.js");
+        }
+
+        // 初始化
+        function initGame() {
+            // 1. 清空
+            grid = Array(BOARD_SIZE).fill(null).map(() => Array(BOARD_SIZE).fill(null));
+            activeWords = [];
+            boardEl.innerHTML = '';
+            acrossListEl.innerHTML = '';
+            downListEl.innerHTML = '';
+
+            // 2. 嘗試生成佈局
+            generateLayout();
+
+            // 3. 繪製網格
+            drawBoard();
+
+            // 4. 顯示提示
+            renderClues();
+        }
+
+        // --- 核心演算法：生成填字佈局 ---
+        function generateLayout() {
+            // 複製並根據長度排序 (長的字先放比較容易成功)
+            let words = JSON.parse(JSON.stringify(wordData));
+            words.sort((a, b) => b.word.length - a.word.length);
+
+            // 放置第一個字在正中間
+            if (words.length > 0) {
+                let first = words[0];
+                let startRow = Math.floor(BOARD_SIZE / 2);
+                let startCol = Math.floor((BOARD_SIZE - first.word.length) / 2);
+                placeWord(first, startRow, startCol, 'across');
+                // 標記為已使用
+                words.shift();
+            }
+
+            // 嘗試放置其餘的字
+            // 重複掃描幾次列表，因為後面加進來的字可能會創造新的連接點
+            for (let pass = 0; pass < 2; pass++) {
+                for (let i = 0; i < words.length; i++) {
+                    let currentWordObj = words[i];
+                    if (currentWordObj.isPlaced) continue;
+
+                    // 嘗試尋找交叉點
+                    let bestPos = findBestPosition(currentWordObj.word);
+                    
+                    if (bestPos) {
+                        placeWord(currentWordObj, bestPos.row, bestPos.col, bestPos.dir);
+                        currentWordObj.isPlaced = true;
+                    }
+                }
+            }
+        }
+
+        // 尋找最佳放置位置
+        function findBestPosition(word) {
+            // 遍歷網格上已有的每一個字
+            for (let r = 0; r < BOARD_SIZE; r++) {
+                for (let c = 0; c < BOARD_SIZE; c++) {
+                    if (grid[r][c]) {
+                        // 如果網格上有字，檢查新單字是否有這個字元
+                        let charOnGrid = grid[r][c].char;
+                        
+                        for (let i = 0; i < word.length; i++) {
+                            if (word[i] === charOnGrid) {
+                                // 找到共同字元！
+                                // 嘗試兩個方向：如果原字是橫的，新字就試直的，反之亦然
+                                // 這裡我們簡化檢查：嘗試 直向放置
+                                if (canPlace(word, r - i, c, 'down')) {
+                                    return { row: r - i, col: c, dir: 'down' };
+                                }
+                                // 嘗試 橫向放置
+                                if (canPlace(word, r, c - i, 'across')) {
+                                    return { row: r, col: c - i, dir: 'across' };
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            return null;
+        }
+
+        // 檢查是否可以放置 (邊界檢查 + 碰撞檢查)
+        function canPlace(word, row, col, dir) {
+            if (row < 0 || col < 0) return false;
+            if (dir === 'across') {
+                if (col + word.length > BOARD_SIZE) return false;
+                // 檢查左邊和右邊是否緊鄰其他字
+                if (col > 0 && grid[row][col-1]) return false;
+                if (col + word.length < BOARD_SIZE && grid[row][col+word.length]) return false;
+            } else {
+                if (row + word.length > BOARD_SIZE) return false;
+                // 檢查上邊和下邊
+                if (row > 0 && grid[row-1][col]) return false;
+                if (row + word.length < BOARD_SIZE && grid[row+word.length][col]) return false;
+            }
+
+            for (let i = 0; i < word.length; i++) {
+                let r = row + (dir === 'down' ? i : 0);
+                let c = col + (dir === 'across' ? i : 0);
+
+                // 如果該格已經有字，必須是相同的字 (交叉點)
+                if (grid[r][c]) {
+                    if (grid[r][c].char !== word[i]) return false;
+                } else {
+                    // 如果該格是空的，檢查它的「兩側」是否有字 (避免兩行字緊貼在一起)
+                    // 這樣會造成無法判斷單字
+                    if (dir === 'across') {
+                        if ((r > 0 && grid[r-1][c]) || (r < BOARD_SIZE-1 && grid[r+1][c])) return false;
+                    } else {
+                        if ((c > 0 && grid[r][c-1]) || (c < BOARD_SIZE-1 && grid[r][c+1])) return false;
+                    }
+                }
+            }
+            return true;
+        }
+
+        // 將單字寫入資料結構
+        function placeWord(wordObj, row, col, dir) {
+            activeWords.push({
+                ...wordObj,
+                row: row,
+                col: col,
+                dir: dir,
+                number: 0 // 稍後計算
+            });
+
+            for (let i = 0; i < wordObj.word.length; i++) {
+                let r = row + (dir === 'down' ? i : 0);
+                let c = col + (dir === 'across' ? i : 0);
+                grid[r][c] = { char: wordObj.word[i] };
+            }
+        }
+
+        // --- 繪圖與渲染 ---
+        function drawBoard() {
+            // 設定 CSS Grid 欄位數
+            boardEl.style.gridTemplateColumns = `repeat(${BOARD_SIZE}, 1fr)`;
+
+            // 重新計算題號 (由左至右，由上至下)
+            // 如果某格是單字的開頭，就需要標號
+            let numberCounter = 1;
+            // 先將 activeWords 排序，確保編號順序自然
+            activeWords.sort((a, b) => (a.row * BOARD_SIZE + a.col) - (b.row * BOARD_SIZE + b.col));
+
+            // 處理重複編號 (若一個格子同時是橫向和直向的開頭，用同一個號碼)
+            let cellNumbers = {}; // key: "r,c", value: number
+
+            activeWords.forEach(w => {
+                let key = `${w.row},${w.col}`;
+                if (!cellNumbers[key]) {
+                    cellNumbers[key] = numberCounter++;
+                }
+                w.number = cellNumbers[key];
+            });
+
+            // 生成 DOM
+            for (let r = 0; r < BOARD_SIZE; r++) {
+                for (let c = 0; c < BOARD_SIZE; c++) {
+                    let cell = document.createElement('div');
+                    cell.className = 'cell';
+                    cell.dataset.r = r;
+                    cell.dataset.c = c;
+
+                    if (grid[r][c]) {
+                        cell.classList.add('active');
+                        
+                        // 1. 檢查是否有題號
+                        let key = `${r},${c}`;
+                        if (cellNumbers[key]) {
+                            let numSpan = document.createElement('span');
+                            numSpan.className = 'cell-number';
+                            numSpan.textContent = cellNumbers[key];
+                            cell.appendChild(numSpan);
+                        }
+
+                        // 2. 加入輸入框
+                        let input = document.createElement('input');
+                        input.maxLength = 1;
+                        input.dataset.answer = grid[r][c].char; // 偷偷存答案方便檢查
+                        
+                        // 自動跳下一格邏輯 (簡單版)
+                        input.oninput = function() {
+                            if (this.value) this.classList.remove('wrong', 'correct');
+                        };
+                        
+                        cell.appendChild(input);
+                    }
+                    boardEl.appendChild(cell);
+                }
+            }
+        }
+
+        function renderClues() {
+            activeWords.forEach(w => {
+                let li = document.createElement('li');
+                // 格式: "1. Hello"
+                li.innerHTML = `<strong>${w.number}.</strong> ${w.meaning}`;
+                
+                if (w.dir === 'across') {
+                    acrossListEl.appendChild(li);
+                } else {
+                    downListEl.appendChild(li);
+                }
+            });
+
+            if (activeWords.length === 0) {
+                alert("無法生成填字遊戲！可能是單字之間沒有共同字元，請嘗試增加更多單字。");
+            }
+        }
+
+        // --- 功能按鈕 ---
+        function checkAnswers() {
+            let inputs = document.querySelectorAll('.cell input');
+            let allCorrect = true;
+
+            inputs.forEach(input => {
+                let userVal = input.value.trim();
+                let answer = input.dataset.answer;
+
+                if (userVal === answer) {
+                    input.classList.add('correct');
+                    input.classList.remove('wrong');
+                } else {
+                    input.classList.add('wrong');
+                    input.classList.remove('correct');
+                    allCorrect = false;
+                }
+            });
+
+            if (allCorrect && inputs.length > 0) {
+                setTimeout(() => alert("恭喜！全對！🎉"), 100);
+            }
+        }
+
+        function revealAnswers() {
+            if(!confirm("確定要顯示所有答案嗎？")) return;
+            
+            let inputs = document.querySelectorAll('.cell input');
+            inputs.forEach(input => {
+                input.value = input.dataset.answer;
+                input.classList.add('correct');
+            });
+        }
+
+        // 啟動
+        initGame();
+
+    </script>
+</body>
+</html>
